@@ -148,3 +148,42 @@ fn chatgpt_alias_reads_codex_cache_and_anchors_before_period() {
         ["gpt-6.1-sol", "20", "80", "0", "10", "0.000148"]
     );
 }
+
+#[test]
+fn copied_executable_works_in_a_unicode_directory_without_checkout() {
+    let config = fixture();
+    let output = tempfile::Builder::new()
+        .prefix("aiUsage Windows 日本語 ")
+        .tempdir()
+        .unwrap();
+    let copied = output.path().join(if cfg!(windows) {
+        "aiUsage.exe"
+    } else {
+        "aiUsage"
+    });
+    fs::copy(env!("CARGO_BIN_EXE_aiUsage"), &copied).unwrap();
+    for version in ["--version", "-V"] {
+        let result = Command::new(&copied)
+            .arg(version)
+            .current_dir(output.path())
+            .output()
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(
+            String::from_utf8(result.stdout).unwrap().trim(),
+            concat!("aiUsage ", env!("CARGO_PKG_VERSION"))
+        );
+    }
+    let result = Command::new(&copied)
+        .args(["claude", "--all"])
+        .env("CLAUDE_CONFIG_DIR", config.path())
+        .current_dir(output.path())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(input(output.path()), 50);
+}

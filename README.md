@@ -73,3 +73,27 @@ cp target/release/aiUsage ~/.local/bin/aiUsage
 ```
 
 `~/.local/bin`がPATHにあれば、任意のフォルダで`aiUsage`を呼び出せます。
+
+Windows（PowerShell）では、コピーした実行ファイルを次のように使います。
+
+```powershell
+.\aiUsage.exe --version
+.\aiUsage.exe claude --month 2026-09
+.\aiUsage.exe chatgpt --from 2026-09-01
+```
+
+Windows MSVC版はCランタイムを静的リンクし、追加のVC++ランタイムのインストールを必要としない設定です。
+
+Windows上のソース検証は`cmd.exe /c scripts\verify-windows.cmd`で再実行できます。配布版と同じMSVCツールチェーンで、整形・Clippy・20件のテスト・リリースビルド・バージョン表示を検査します。Windows 11 Pro実機での結果は[Windows検証記録](docs/windows-verification.md)に記載しています。GitHub Actionsの通常検査もLinux・macOS・Windowsで実行する構成です。
+
+## オプションとバージョン・更新
+
+`-h` / `--help`で使い方、`-V` / `--version`で現在の版を表示します。バージョン表示は通信やCSV出力を行いません。
+
+1文字の短縮オプションは`-h`、長い名前のオプションは`--month`のように記述します。期間オプションは現在、長い名前のみです。`-month`や`-update`の独自形式は採用していません。
+
+将来、公開リリースからの自動更新を提供する場合は、`aiUsage update`というサブコマンドを使う設計が適しています。単価表も実行ファイルに同梱されるため、単価の変更を配布する用途にも使えます。現在はGitHubのaiUsage公開リリースがなく、更新機能は未実装です。
+
+更新機能を実装する際はcodexSwitchの方式を参考にし、最新リリースの取得、OS別アセットの選択、SHA-256照合、新しい実行ファイルの起動・版の確認、失敗時の復旧を行います。Windowsでは実行中のexeを直接上書きできないため、旧版を退避して置き換える処理が必要です。通常の計測・`--version`では更新確認を行わず、明示した更新操作だけ通信する設計にします。
+
+参考：[clapのshort/longオプション](https://docs.rs/clap/latest/clap/struct.Arg.html)、[GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)。
