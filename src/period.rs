@@ -21,6 +21,8 @@ pub enum Command {
     Chatgpt(Args),
     /// 最新の公開リリースへ実行ファイルを自動更新
     Update,
+    /// 確認後に実行中の実行ファイルだけを削除
+    Uninstall,
 }
 
 #[derive(Debug, clap::Args)]

@@ -2,6 +2,7 @@ mod model;
 mod parsers;
 mod period;
 mod pricing;
+mod uninstall;
 mod update;
 
 use anyhow::{Context, Result, bail};
@@ -149,6 +150,12 @@ fn run() -> Result<()> {
         UsageCommand::Claude(args) => (Provider::Claude, args),
         UsageCommand::Chatgpt(args) => (Provider::Chatgpt, args),
         UsageCommand::Update => return update::run(),
+        UsageCommand::Uninstall => {
+            return uninstall::run(
+                "aiUsage",
+                "CSV・保存ログ・設定・PATH・共有binフォルダは残ります。",
+            );
+        }
     };
     let period = Period::from_args(&args, Utc::now())?;
     let paths = roots(provider)?;
