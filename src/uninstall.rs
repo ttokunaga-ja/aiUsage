@@ -165,7 +165,11 @@ try {
     }
     Write-Receipt 'deleted' 'Staged executable deleted after parent exit'
 } catch {
-    Write-Receipt 'failed' $_.Exception.Message
+    $failure = $_.Exception.ToString()
+    # This diagnostic uses only .NET so module-import failures remain observable.
+    [IO.File]::WriteAllText($receipt + '.error.txt', $failure, [Text.UTF8Encoding]::new($false))
+    try { Write-Receipt 'failed' $failure }
+    catch { [IO.File]::AppendAllText($receipt + '.error.txt', [Environment]::NewLine + $_.Exception.ToString()) }
     exit 1
 }
 "#;
@@ -223,26 +227,28 @@ try {
         fs::rename(executable, &staged).context("実行中の実行ファイルを退避できません")?;
         let system_root = env::var_os("SystemRoot").context("SystemRootがありません");
         let launch = system_root.and_then(|root| {
-            Command::new(
-                std::path::PathBuf::from(root)
-                    .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
-            )
-            .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
-            .env("EXEC_UNINSTALL_STAGED", &staged)
-            .env("EXEC_UNINSTALL_ORIGINAL", executable)
-            .env("EXEC_UNINSTALL_RECEIPT", &receipt)
-            .env("EXEC_UNINSTALL_READY", &ready)
-            .env(
-                "EXEC_UNINSTALL_HASH",
-                hash.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-            )
-            .env("EXEC_UNINSTALL_PID", std::process::id().to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x08000000)
-            .spawn()
-            .map_err(Into::into)
+            let powershell_home =
+                std::path::PathBuf::from(root).join("System32/WindowsPowerShell/v1.0");
+            Command::new(powershell_home.join("powershell.exe"))
+                .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+                // Parent pwsh sessions may expose incompatible PowerShell 7 modules.
+                // Restrict only this native Windows PowerShell helper's discovery.
+                .env("PSModulePath", powershell_home.join("Modules"))
+                .env("EXEC_UNINSTALL_STAGED", &staged)
+                .env("EXEC_UNINSTALL_ORIGINAL", executable)
+                .env("EXEC_UNINSTALL_RECEIPT", &receipt)
+                .env("EXEC_UNINSTALL_READY", &ready)
+                .env(
+                    "EXEC_UNINSTALL_HASH",
+                    hash.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                )
+                .env("EXEC_UNINSTALL_PID", std::process::id().to_string())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(0x08000000)
+                .spawn()
+                .map_err(Into::into)
         });
         let mut child = match launch {
             Ok(child) => child,
@@ -268,11 +274,20 @@ try {
                         kept.join("receipt.json").display()
                     );
                 }
-                rollback_with_receipt(receipt_directory, || rollback(executable, &staged, hash))
-                    .context(
-                        "削除ヘルパーの準備を確認できず、実行ファイルの復元にも失敗しました",
-                    )?;
-                bail!("削除ヘルパーの準備を確認できません。実行ファイルは復元しました");
+                let diagnostic = receipt.with_extension("json.error.txt");
+                let detail = fs::read_to_string(&diagnostic).unwrap_or_else(|_| {
+                    "ヘルパーのエラー記録はありません（準備待機の期限超過または起動直後の失敗）"
+                        .into()
+                });
+                if let Err(error) = rollback(executable, &staged, hash) {
+                    return rollback_with_receipt(receipt_directory, || Err(error))
+                        .with_context(|| format!("削除ヘルパーの準備を確認できません: {detail}。実行ファイルの復元にも失敗しました"));
+                }
+                let kept = receipt_directory.keep();
+                bail!(
+                    "削除ヘルパーの準備を確認できません: {detail}。実行ファイルは復元しました。記録フォルダ: {}",
+                    kept.display()
+                );
             }
             thread::sleep(Duration::from_millis(50));
         }

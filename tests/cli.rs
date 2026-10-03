@@ -294,30 +294,7 @@ fn uninstall_affirmative_removes_only_copied_executable() {
             String::from_utf8_lossy(&result.stderr)
         );
         #[cfg(windows)]
-        {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            assert!(stderr.contains("削除を予約"));
-            let receipt = stderr
-                .lines()
-                .find_map(|line| {
-                    line.strip_prefix("結果の記録: ")
-                        .and_then(|line| line.split_once("（status:").map(|(path, _)| path))
-                })
-                .unwrap()
-                .trim();
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
-            loop {
-                let record: serde_json::Value =
-                    serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap();
-                if record["status"] == "deleted" {
-                    break;
-                }
-                assert_ne!(record["status"], "failed", "{record}");
-                assert!(std::time::Instant::now() < deadline, "{record}");
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            fs::remove_dir_all(std::path::Path::new(receipt).parent().unwrap()).unwrap();
-        }
+        wait_for_uninstall_receipt(&result);
         assert!(!executable.exists());
         for name in ["usage.csv", "log.jsonl", "config.json", "other-tool"] {
             assert_eq!(fs::read_to_string(dir.path().join(name)).unwrap(), name);
@@ -356,4 +333,69 @@ fn uninstall_refuses_a_replacement_made_during_confirmation() {
     assert!(remainder.contains("変更"));
     assert_eq!(fs::read(&executable).unwrap(), b"replacement must survive");
     assert!(retained.exists());
+}
+
+#[cfg(windows)]
+fn wait_for_uninstall_receipt(result: &std::process::Output) {
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("削除を予約"));
+    let receipt = stderr
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("結果の記録: ")
+                .and_then(|line| line.split_once("（status:").map(|(path, _)| path))
+        })
+        .unwrap()
+        .trim();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    loop {
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(receipt).unwrap()).unwrap();
+        if record["status"] == "deleted" {
+            break;
+        }
+        assert_ne!(record["status"], "failed", "{record}");
+        assert!(std::time::Instant::now() < deadline, "{record}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    fs::remove_dir_all(std::path::Path::new(receipt).parent().unwrap()).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn uninstall_ignores_inherited_incompatible_powershell_modules() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempfile::tempdir().unwrap();
+    let executable = copied_uninstaller(&dir);
+    let modules = dir.path().join("shadow-modules");
+    let utility = modules.join("Microsoft.PowerShell.Utility");
+    fs::create_dir_all(&utility).unwrap();
+    fs::write(utility.join("Microsoft.PowerShell.Utility.psd1"),
+        "@{ RootModule='Microsoft.PowerShell.Utility.psm1'; ModuleVersion='7.0.0'; GUID='159b5e0e-66b7-4e52-ab34-c7c9e27c91bd'; FunctionsToExport=@('Get-FileHash','ConvertTo-Json'); PowerShellVersion='5.1' }").unwrap();
+    fs::write(utility.join("Microsoft.PowerShell.Utility.psm1"),
+        "function Get-FileHash { throw 'Incompatible inherited module selected' }; function ConvertTo-Json { throw 'Incompatible inherited module selected' }; Export-ModuleMember -Function Get-FileHash,ConvertTo-Json").unwrap();
+    let mut inherited = modules.into_os_string();
+    inherited.push(";");
+    inherited.push(
+        std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32/WindowsPowerShell/v1.0/Modules"),
+    );
+    let mut child = Command::new(&executable)
+        .arg("uninstall")
+        .env("PSModulePath", inherited)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"yes\n").unwrap();
+    let result = child.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    wait_for_uninstall_receipt(&result);
+    assert!(!executable.exists());
+    assert!(utility.join("Microsoft.PowerShell.Utility.psd1").exists());
 }
