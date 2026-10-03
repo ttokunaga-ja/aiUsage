@@ -2,6 +2,93 @@
 
 Claude Code / Codexのローカル保存ログを読み、モデル別の利用量とAPI参考換算を`usage.csv`に出力するRust製CLIです。実行ファイルには単価表を同梱し、実行時にPython・Rust・APIキーは不要です。
 
+## 必要なもの
+
+- macOS（Apple Silicon / Intel）またはWindows x64
+- 集計したいClaude Code / Codexの保存ログ
+- インストール・更新時のインターネット接続
+
+配布版を使う場合はRust・Python・APIキーは不要です。管理者権限も必要ありません。通常の集計はローカルで行い、保存ログを外部へ送信しません。Linuxでは[ソースからビルド](#ビルド検証)して使えます。
+
+## はじめかた
+
+### 1. ダウンロードする
+
+[最新のReleases](https://github.com/ttokunaga-ja/aiUsage/releases/latest)から、OSに合う実行ファイルと`SHA256SUMS`を同じフォルダへダウンロードします。
+
+| OS | ダウンロードするファイル | インストール後の名前 |
+| --- | --- | --- |
+| macOS（Apple Silicon / Intel共通） | [aiUsage-macos](https://github.com/ttokunaga-ja/aiUsage/releases/latest/download/aiUsage-macos) | `aiUsage` |
+| Windows x64 | [aiUsage-windows-x64.exe](https://github.com/ttokunaga-ja/aiUsage/releases/latest/download/aiUsage-windows-x64.exe) | `aiUsage.exe` |
+
+[SHA256SUMSをダウンロード](https://github.com/ttokunaga-ja/aiUsage/releases/latest/download/SHA256SUMS)。以下はダウンロード先が`Downloads`の場合です。別のフォルダに保存した場合は、そのフォルダで実行してください。
+
+### 2. インストールする
+
+#### macOS（ターミナル）
+
+次のコマンドでSHA-256を確認し、一致した場合だけ`~/.local/bin/aiUsage`へインストールします。
+
+```sh
+(
+  set -eu
+  cd "$HOME/Downloads"
+  grep '  aiUsage-macos$' SHA256SUMS | shasum -a 256 -c -
+  mkdir -p "$HOME/.local/bin"
+  install -m 755 aiUsage-macos "$HOME/.local/bin/aiUsage"
+)
+```
+
+`aiUsage-macos: OK`と表示されればハッシュは一致しています。`~/.local/bin`をPATHに追加すると、どのフォルダからでも`aiUsage`を実行できます。現在のターミナルには次のコマンドで反映します。
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+次回以降にも有効にするには、同じ`export`の行を`~/.zshrc`へ追加してください。bashを使っている場合は`~/.bash_profile`へ追加します。
+
+#### Windows（PowerShell）
+
+次のコマンドでSHA-256を確認し、一致した場合だけ`%USERPROFILE%\.local\bin\aiUsage.exe`へコピーします。
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    Set-Location (Join-Path $env:USERPROFILE 'Downloads')
+    $lines = @(Get-Content -LiteralPath 'SHA256SUMS' |
+        Where-Object { $_ -match '^[a-fA-F0-9]{64}  aiUsage-windows-x64\.exe$' })
+    if ($lines.Count -ne 1) { throw 'SHA256SUMSにWindows用のハッシュがありません' }
+    $actual = (Get-FileHash -LiteralPath 'aiUsage-windows-x64.exe' -Algorithm SHA256).Hash
+    if ($actual -ine $lines[0].Substring(0, 64)) { throw 'SHA-256が一致しません' }
+    $bin = Join-Path $env:USERPROFILE '.local\bin'
+    New-Item -ItemType Directory -Path $bin -Force | Out-Null
+    Copy-Item -LiteralPath 'aiUsage-windows-x64.exe' -Destination (Join-Path $bin 'aiUsage.exe') -Force
+    Write-Host "インストールしました: $bin\aiUsage.exe"
+}
+```
+
+現在のPowerShellにPATHを反映するには、次を実行します。
+
+```powershell
+$env:Path = "$(Join-Path $env:USERPROFILE '.local\bin');$env:Path"
+```
+
+次回以降にも有効にするには、Windowsの「環境変数を編集」から**ユーザー環境変数**の`Path`へ`%USERPROFILE%\.local\bin`を追加し、新しくターミナルを開いてください。
+
+Windows版はCランタイムを静的リンクしているため、追加のVC++ランタイムのインストールは不要です。PATHを設定しない場合も、実行ファイルのあるフォルダで`.\aiUsage.exe`として使えます。
+
+### 3. 動作確認して集計する
+
+macOS・Windowsともに同じコマンドです。
+
+```sh
+aiUsage --version
+aiUsage --help
+aiUsage claude --month 2026-09
+```
+
+初期設定やログイン操作は不要です。集計結果の`usage.csv`は**コマンドを実行したフォルダ**に保存されます。CSVを保存したいフォルダへ移動してから実行してください。
+
 ## 使い方
 
 ```sh
@@ -58,7 +145,11 @@ DBの会話累積値、スクリーンショット、キャッシュ比率の推
 
 ## ビルド・検証
 
+ソースから使う場合はRustとGitを用意し、リポジトリを取得してビルドします。
+
 ```sh
+git clone https://github.com/ttokunaga-ja/aiUsage.git
+cd aiUsage
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
@@ -67,22 +158,24 @@ cargo build --release --locked
 
 macOS/Linuxの実行ファイルは`target/release/aiUsage`、Windowsは`target/release/aiUsage.exe`です。このファイルをコピーして使えます。
 
+ユーザー用のフォルダへコピーする場合：
+
+macOS/Linux：
+
 ```sh
-mkdir -p ~/.local/bin
-cp target/release/aiUsage ~/.local/bin/aiUsage
+mkdir -p "$HOME/.local/bin"
+install -m 755 target/release/aiUsage "$HOME/.local/bin/aiUsage"
 ```
 
-`~/.local/bin`がPATHにあれば、任意のフォルダで`aiUsage`を呼び出せます。
-
-Windows（PowerShell）では、コピーした実行ファイルを次のように使います。
+Windows（PowerShell）：
 
 ```powershell
-.\aiUsage.exe --version
-.\aiUsage.exe claude --month 2026-09
-.\aiUsage.exe chatgpt --from 2026-09-01
+$bin = Join-Path $env:USERPROFILE '.local\bin'
+New-Item -ItemType Directory -Path $bin -Force | Out-Null
+Copy-Item -LiteralPath 'target\release\aiUsage.exe' -Destination (Join-Path $bin 'aiUsage.exe') -Force
 ```
 
-Windows MSVC版はCランタイムを静的リンクし、追加のVC++ランタイムのインストールを必要としない設定です。
+PATHの設定は[はじめかた](#はじめかた)を参照してください。
 
 Windows上のソース検証は`cmd.exe /c scripts\verify-windows.cmd`で再実行できます。配布版と同じMSVCツールチェーンで、整形・Clippy・テスト・リリースビルド・バージョン表示を検査します。Windows 11 Pro実機での結果は[Windows検証記録](docs/windows-verification.md)に記載しています。GitHub Actionsの通常検査もLinux・macOS・Windowsで実行する構成です。
 
@@ -104,4 +197,24 @@ GitHubの`ttokunaga-ja/aiUsage`の最新正式リリースから、macOSまた�
 
 配布用の実行ファイルは[GitHub Releases](https://github.com/ttokunaga-ja/aiUsage/releases)から取得できます。公開するタグはCargoの版と一致する`vX.Y.Z`にします。リリースワークフローがOS別の実行ファイルと`SHA256SUMS`を作成します。
 
-参考：[clapのshort/longオプション](https://docs.rs/clap/latest/clap/struct.Arg.html)、[GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)。
+タグを公開したときに新しいリリースが作られます。`main`に入っただけの変更は`aiUsage update`の対象になりません。Linuxでは自動更新に対応していないため、新しいソースを取得して再ビルドします。
+
+## アンインストール
+
+macOS：
+
+```sh
+rm "$HOME/.local/bin/aiUsage"
+```
+
+Windows（PowerShell）：
+
+```powershell
+Remove-Item -LiteralPath (Join-Path $env:USERPROFILE '.local\bin\aiUsage.exe')
+```
+
+実行ファイルを削除すればアンインストールできます。出力済みのCSVとClaude Code / Codexの保存ログは残ります。`.local/bin`は他のツールも使うため、フォルダやPATHの項目をまとめて削除する必要はありません。
+
+## ライセンス
+
+[MIT](LICENSE)
