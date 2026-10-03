@@ -1,21 +1,6 @@
-use crate::model::Provider;
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, TimeZone, Utc};
-use clap::{ArgGroup, Parser, ValueEnum};
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum Source {
-    Claude,
-    Chatgpt,
-}
-impl From<Source> for Provider {
-    fn from(value: Source) -> Self {
-        match value {
-            Source::Claude => Self::Claude,
-            Source::Chatgpt => Self::Chatgpt,
-        }
-    }
-}
+use clap::{ArgGroup, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -23,10 +8,24 @@ impl From<Source> for Provider {
     version,
     about = "Claude Code / Codexの保存ログをモデル別CSVへ出力"
 )]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Claude Codeの保存ログを集計
+    Claude(Args),
+    /// Codexの保存ログを集計
+    Chatgpt(Args),
+    /// 最新の公開リリースへ実行ファイルを自動更新
+    Update,
+}
+
+#[derive(Debug, clap::Args)]
 #[command(group(ArgGroup::new("period").args(["day", "month", "year", "all"]).multiple(false)))]
 pub struct Args {
-    #[arg(value_enum)]
-    pub source: Source,
     /// 日本時間の日付 (YYYY-MM-DD)
     #[arg(long, conflicts_with_all = ["from", "to"])]
     pub day: Option<String>,
@@ -126,12 +125,15 @@ impl Period {
 mod tests {
     use super::*;
     fn period(flags: &[&str]) -> Period {
-        let args = Args::try_parse_from(
+        let cli = Cli::try_parse_from(
             ["aiUsage", "claude"]
                 .into_iter()
                 .chain(flags.iter().copied()),
         )
         .unwrap();
+        let Command::Claude(args) = cli.command else {
+            panic!("unexpected command")
+        };
         Period::from_args(&args, "2026-10-03T10:00:00Z".parse().unwrap()).unwrap()
     }
     #[test]
@@ -157,15 +159,17 @@ mod tests {
     #[test]
     fn rejects_conflicts_and_invalid_dates() {
         assert!(
-            Args::try_parse_from(["aiUsage", "claude", "--all", "--day", "2026-09-01"]).is_err()
+            Cli::try_parse_from(["aiUsage", "claude", "--all", "--day", "2026-09-01"]).is_err()
         );
         for flags in [
             vec!["--day", "2026-02-30"],
             vec!["--month", "2026-9"],
             vec!["--from", "2026-10-01", "--to", "2026-09-01"],
         ] {
-            let args =
-                Args::try_parse_from(["aiUsage", "claude"].into_iter().chain(flags)).unwrap();
+            let cli = Cli::try_parse_from(["aiUsage", "claude"].into_iter().chain(flags)).unwrap();
+            let Command::Claude(args) = cli.command else {
+                panic!("unexpected command")
+            };
             assert!(Period::from_args(&args, Utc::now()).is_err());
         }
     }

@@ -2,7 +2,7 @@
 
 検証日：2026-10-03（日本時間）。既存のSSH接続からWindows 11 Pro x64へ接続し、WindowsネイティブのMSVCツールチェーンで検証した。WSLやmacOSのクロスコンパイルによる代用ではない。
 
-## 環境と結果
+## 0.1.0の環境と結果
 
 | 項目 | 結果 |
 | --- | --- |
@@ -53,3 +53,19 @@ cmd.exe /c scripts\verify-windows.cmd stable-x86_64-pc-windows-msvc
 初回のMSVCビルドでは`VCRUNTIME140.dll`への依存があったため、`.cargo/config.toml`でWindows MSVC向けに`crt-static`を指定した。その設定で20件のテストと実ログによるコピーexeの動作を再検証した。最終exeのインポート表はWindows標準DLLのみで、`VCRUNTIME140.dll`と`MSVCP`系DLLは含まれない。
 
 参考：[Rust公式・Cランタイムの静的リンク](https://doc.rust-lang.org/stable/reference/linkage.html#static-and-dynamic-c-runtimes)。
+
+## 0.1.1の自動更新検証
+
+同じWindows実機で`aiUsage update`の実装を追加した版を再検証した。整形、Clippy、28件のテスト（ユニット22・CLI6）、MSVCのリリースビルドが通過した。
+
+更新のテストでは、不正なタグ・ハッシュ・候補バージョンの拒否、同じ版の更新省略、更新ロックの排他と解除、一時ファイルの後始末、置き換え失敗時の復元、復元失敗時の旧版保持を確認した。コピーしたテスト用exeを実際に起動した状態で退避・置き換えを行うテストもWindows上で成功した。ダウンロード部分はテスト用データを注入しており、製品には配布元を差し替えるオプションや環境変数は設けていない。
+
+製品exeの`--version`と`update --help`も成功した。公式リリースAPIはまだ404を返すため、製品の`update`は終了コード1で終了した。その前後でexeのSHA-256が変わらず、更新ロックが残らないことを確認した。公開済み新バージョンからの一連の更新は、リリース公開後の確認が必要になる。
+
+0.1.1のWindows配布用exeのSHA-256：
+
+```text
+33b8c7380bd459072f51613ce21788b0c5be8e5c25f20aa50481a1a2c60633b2
+```
+
+SSH経由で回収したexeのハッシュも一致した。検証出力は`dist/validation/windows/updater-build.log`と`updater-runtime.log`に保存している。macOSでは27件のテスト、両CPU向けのビルド、Universalバイナリの署名検査、公開リリースが取得できない場合の旧版保持・ロック解除を確認した。Intel向けのビルドは成功しているが、Intel実機での起動は今回検証していない。

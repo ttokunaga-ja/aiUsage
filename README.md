@@ -84,7 +84,7 @@ Windows（PowerShell）では、コピーした実行ファイルを次のよう
 
 Windows MSVC版はCランタイムを静的リンクし、追加のVC++ランタイムのインストールを必要としない設定です。
 
-Windows上のソース検証は`cmd.exe /c scripts\verify-windows.cmd`で再実行できます。配布版と同じMSVCツールチェーンで、整形・Clippy・20件のテスト・リリースビルド・バージョン表示を検査します。Windows 11 Pro実機での結果は[Windows検証記録](docs/windows-verification.md)に記載しています。GitHub Actionsの通常検査もLinux・macOS・Windowsで実行する構成です。
+Windows上のソース検証は`cmd.exe /c scripts\verify-windows.cmd`で再実行できます。配布版と同じMSVCツールチェーンで、整形・Clippy・テスト・リリースビルド・バージョン表示を検査します。Windows 11 Pro実機での結果は[Windows検証記録](docs/windows-verification.md)に記載しています。GitHub Actionsの通常検査もLinux・macOS・Windowsで実行する構成です。
 
 ## オプションとバージョン・更新
 
@@ -92,8 +92,16 @@ Windows上のソース検証は`cmd.exe /c scripts\verify-windows.cmd`で再実�
 
 1文字の短縮オプションは`-h`、長い名前のオプションは`--month`のように記述します。期間オプションは現在、長い名前のみです。`-month`や`-update`の独自形式は採用していません。
 
-将来、公開リリースからの自動更新を提供する場合は、`aiUsage update`というサブコマンドを使う設計が適しています。単価表も実行ファイルに同梱されるため、単価の変更を配布する用途にも使えます。現在はGitHubのaiUsage公開リリースがなく、更新機能は未実装です。
+`aiUsage update`で最新の公開リリースを取得し、実行ファイルを自動で置き換えます。単価表も実行ファイルに含まれるため、一緒に更新されます。
 
-更新機能を実装する際はcodexSwitchの方式を参考にし、最新リリースの取得、OS別アセットの選択、SHA-256照合、新しい実行ファイルの起動・版の確認、失敗時の復旧を行います。Windowsでは実行中のexeを直接上書きできないため、旧版を退避して置き換える処理が必要です。通常の計測・`--version`では更新確認を行わず、明示した更新操作だけ通信する設計にします。
+```sh
+aiUsage update
+```
+
+GitHubの`ttokunaga-ja/aiUsage`の最新正式リリースから、macOSまたはWindows用のファイルと`SHA256SUMS`を取得します。SHA-256と新しい実行ファイルの`--version`を確認してから置き換えます。最新版の場合はそのまま終了します。通常の計測・`--version`では更新確認を行いません。
+
+通信にはOSの`curl`を使用し、実行ファイルのあるフォルダへの書き込み権限が必要です。Windowsでは実行中の旧exeを退避して置き換え、失敗時には元へ戻します。残った退避ファイルの場所は表示します。CSVや保存ログは変更しません。
+
+現在は公開リリースがないため、実際の配布元からの更新には、GitHubリポジトリとリリースの公開が必要です。公開するタグはCargoの版と一致する`vX.Y.Z`にします。用意したリリースワークフローがOS別の実行ファイルと`SHA256SUMS`を作成します。
 
 参考：[clapのshort/longオプション](https://docs.rs/clap/latest/clap/struct.Arg.html)、[GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)。

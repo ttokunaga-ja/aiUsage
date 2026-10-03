@@ -2,12 +2,13 @@ mod model;
 mod parsers;
 mod period;
 mod pricing;
+mod update;
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use clap::Parser;
 use model::{Provider, Tokens};
-use period::{Args, Period};
+use period::{Cli, Command as UsageCommand, Period};
 use pricing::Pricing;
 use sha2::{Digest, Sha256};
 use std::{
@@ -144,8 +145,11 @@ fn save(path: &Path, original: Option<Vec<u8>>, rows: &BTreeMap<String, Row>) ->
 }
 
 fn run() -> Result<()> {
-    let args = Args::parse();
-    let provider = Provider::from(args.source);
+    let (provider, args) = match Cli::parse().command {
+        UsageCommand::Claude(args) => (Provider::Claude, args),
+        UsageCommand::Chatgpt(args) => (Provider::Chatgpt, args),
+        UsageCommand::Update => return update::run(),
+    };
     let period = Period::from_args(&args, Utc::now())?;
     let paths = roots(provider)?;
     let output = env::current_dir()?.join(OUTPUT);

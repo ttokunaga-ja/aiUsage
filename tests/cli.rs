@@ -187,3 +187,23 @@ fn copied_executable_works_in_a_unicode_directory_without_checkout() {
     );
     assert_eq!(input(output.path()), 50);
 }
+
+#[test]
+fn update_rejects_usage_options_without_writing_csv() {
+    let output = tempfile::tempdir().unwrap();
+    for flags in [
+        vec!["--all"],
+        vec!["--month", "2026-09"],
+        vec!["--from", "2026-09-01"],
+    ] {
+        let result = Command::new(env!("CARGO_BIN_EXE_aiUsage"))
+            .arg("update")
+            .args(flags)
+            .current_dir(output.path())
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("unexpected argument"));
+        assert_eq!(fs::read_dir(output.path()).unwrap().count(), 0);
+    }
+}
