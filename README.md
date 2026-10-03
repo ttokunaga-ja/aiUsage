@@ -12,72 +12,31 @@ Claude Code / Codexのローカル保存ログを読み、モデル別の利用�
 
 ## はじめかた
 
-### 1. ダウンロードする
+### 1. インストールする
 
-[最新のReleases](https://github.com/ttokunaga-ja/aiUsage/releases/latest)から、OSに合う実行ファイルと`SHA256SUMS`を同じフォルダへダウンロードします。
-
-| OS | ダウンロードするファイル | インストール後の名前 |
-| --- | --- | --- |
-| macOS（Apple Silicon / Intel共通） | [aiUsage-macos](https://github.com/ttokunaga-ja/aiUsage/releases/latest/download/aiUsage-macos) | `aiUsage` |
-| Windows x64 | [aiUsage-windows-x64.exe](https://github.com/ttokunaga-ja/aiUsage/releases/latest/download/aiUsage-windows-x64.exe) | `aiUsage.exe` |
-
-[SHA256SUMSをダウンロード](https://github.com/ttokunaga-ja/aiUsage/releases/latest/download/SHA256SUMS)。以下はダウンロード先が`Downloads`の場合です。別のフォルダに保存した場合は、そのフォルダで実行してください。
-
-### 2. インストールする
+OSに合うコマンドを1回実行します。最新の正式リリースをダウンロードし、SHA-256とバージョンを確認してからインストールします。Rust・Pythonのインストールや初期設定は不要です。
 
 #### macOS（ターミナル）
 
-次のコマンドでSHA-256を確認し、一致した場合だけ`~/.local/bin/aiUsage`へインストールします。
-
 ```sh
-(
-  set -eu
-  cd "$HOME/Downloads"
-  grep '  aiUsage-macos$' SHA256SUMS | shasum -a 256 -c -
-  mkdir -p "$HOME/.local/bin"
-  install -m 755 aiUsage-macos "$HOME/.local/bin/aiUsage"
-)
+curl -fsSL https://raw.githubusercontent.com/ttokunaga-ja/aiUsage/main/install.sh | sh
 ```
 
-`aiUsage-macos: OK`と表示されればハッシュは一致しています。`~/.local/bin`をPATHに追加すると、どのフォルダからでも`aiUsage`を実行できます。現在のターミナルには次のコマンドで反映します。
+Apple Silicon・Intel共通です。`~/.local/bin/aiUsage`へインストールし、使用しているシェルの設定ファイル（zshなら`~/.zshrc`）へPATHの設定を追加します。**新しいターミナルを開く**と`aiUsage`を使えます。
 
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-次回以降にも有効にするには、同じ`export`の行を`~/.zshrc`へ追加してください。bashを使っている場合は`~/.bash_profile`へ追加します。
-
-#### Windows（PowerShell）
-
-次のコマンドでSHA-256を確認し、一致した場合だけ`%USERPROFILE%\.local\bin\aiUsage.exe`へコピーします。
+#### Windows x64（PowerShell）
 
 ```powershell
-& {
-    $ErrorActionPreference = 'Stop'
-    Set-Location (Join-Path $env:USERPROFILE 'Downloads')
-    $lines = @(Get-Content -LiteralPath 'SHA256SUMS' |
-        Where-Object { $_ -match '^[a-fA-F0-9]{64}  aiUsage-windows-x64\.exe$' })
-    if ($lines.Count -ne 1) { throw 'SHA256SUMSにWindows用のハッシュがありません' }
-    $actual = (Get-FileHash -LiteralPath 'aiUsage-windows-x64.exe' -Algorithm SHA256).Hash
-    if ($actual -ine $lines[0].Substring(0, 64)) { throw 'SHA-256が一致しません' }
-    $bin = Join-Path $env:USERPROFILE '.local\bin'
-    New-Item -ItemType Directory -Path $bin -Force | Out-Null
-    Copy-Item -LiteralPath 'aiUsage-windows-x64.exe' -Destination (Join-Path $bin 'aiUsage.exe') -Force
-    Write-Host "インストールしました: $bin\aiUsage.exe"
-}
+irm https://raw.githubusercontent.com/ttokunaga-ja/aiUsage/main/install.ps1 | iex
 ```
 
-現在のPowerShellにPATHを反映するには、次を実行します。
+`%USERPROFILE%\.local\bin\aiUsage.exe`へインストールし、ユーザーPATHと現在のPowerShellのPATHへ追加します。そのまま`aiUsage`を使えます。Cランタイムは静的リンクしているため、追加のVC++ランタイムは不要です。
 
-```powershell
-$env:Path = "$(Join-Path $env:USERPROFILE '.local\bin');$env:Path"
-```
+実行ファイルの検証や実行に失敗した場合は、既存の実行ファイルを置き換えません。
 
-次回以降にも有効にするには、Windowsの「環境変数を編集」から**ユーザー環境変数**の`Path`へ`%USERPROFILE%\.local\bin`を追加し、新しくターミナルを開いてください。
+実行ファイルと`SHA256SUMS`を手動で取得する場合は、[最新のReleases](https://github.com/ttokunaga-ja/aiUsage/releases/latest)を利用できます。
 
-Windows版はCランタイムを静的リンクしているため、追加のVC++ランタイムのインストールは不要です。PATHを設定しない場合も、実行ファイルのあるフォルダで`.\aiUsage.exe`として使えます。
-
-### 3. 動作確認して集計する
+### 2. 動作確認して集計する
 
 macOS・Windowsともに同じコマンドです。
 
@@ -175,7 +134,9 @@ New-Item -ItemType Directory -Path $bin -Force | Out-Null
 Copy-Item -LiteralPath 'target\release\aiUsage.exe' -Destination (Join-Path $bin 'aiUsage.exe') -Force
 ```
 
-PATHの設定は[はじめかた](#はじめかた)を参照してください。
+ソースからコピーした場合は、コピー先をシェルまたはWindowsのユーザーPATHへ追加してください。
+
+インストーラーの隔離検証では、`BIN_DIR`に絶対パスのテスト用フォルダを指定し、`AI_USAGE_INSTALL_NO_PATH=1`でシェル設定・ユーザーPATHの変更を省略できます。この変数は検証用です。通常のインストールでは指定せず、PATHを自動設定します。
 
 Windows上のソース検証は`cmd.exe /c scripts\verify-windows.cmd`で再実行できます。配布版と同じMSVCツールチェーンで、整形・Clippy・テスト・リリースビルド・バージョン表示を検査します。Windows 11 Pro実機での結果は[Windows検証記録](docs/windows-verification.md)に記載しています。GitHub Actionsの通常検査もLinux・macOS・Windowsで実行する構成です。
 
