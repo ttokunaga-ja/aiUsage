@@ -102,6 +102,6 @@ GitHubの`ttokunaga-ja/aiUsage`の最新正式リリースから、macOSまた�
 
 通信にはOSの`curl`を使用し、実行ファイルのあるフォルダへの書き込み権限が必要です。Windowsでは実行中の旧exeを退避して置き換え、失敗時には元へ戻します。残った退避ファイルの場所は表示します。CSVや保存ログは変更しません。
 
-現在は公開リリースがないため、実際の配布元からの更新には、GitHubリポジトリとリリースの公開が必要です。公開するタグはCargoの版と一致する`vX.Y.Z`にします。用意したリリースワークフローがOS別の実行ファイルと`SHA256SUMS`を作成します。
+配布用の実行ファイルは[GitHub Releases](https://github.com/ttokunaga-ja/aiUsage/releases)から取得できます。公開するタグはCargoの版と一致する`vX.Y.Z`にします。リリースワークフローがOS別の実行ファイルと`SHA256SUMS`を作成します。
 
 参考：[clapのshort/longオプション](https://docs.rs/clap/latest/clap/struct.Arg.html)、[GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)。
