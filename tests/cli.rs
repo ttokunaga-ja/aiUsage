@@ -3,8 +3,13 @@ use std::{
     fs,
     io::Write,
     process::{Command, Stdio},
+    sync::Mutex,
 };
 use tempfile::TempDir;
+
+// A concurrent Linux fork can inherit a copied executable's write descriptor
+// before CLOEXEC closes it, causing ETXTBSY. Serialize these copy/spawn tests.
+static PROCESS_TESTS: Mutex<()> = Mutex::new(());
 
 fn fixture() -> TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -54,6 +59,7 @@ fn input(path: &std::path::Path) -> u64 {
 
 #[test]
 fn dates_always_produce_the_same_six_columns_and_one_row_per_model() {
+    let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();
     for (flags, expected) in [
         (vec!["--month", "2026-09"], 20),
@@ -79,6 +85,7 @@ fn dates_always_produce_the_same_six_columns_and_one_row_per_model() {
 
 #[test]
 fn overwrite_requires_affirmative_input_and_eof_preserves_original() {
+    let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();
     let output = tempfile::tempdir().unwrap();
     let path = output.path().join("usage.csv");
@@ -96,6 +103,7 @@ fn overwrite_requires_affirmative_input_and_eof_preserves_original() {
 
 #[test]
 fn invalid_periods_and_removed_options_do_not_create_output() {
+    let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();
     for flags in [
         vec!["--month", "2026-09", "--all"],
@@ -112,6 +120,7 @@ fn invalid_periods_and_removed_options_do_not_create_output() {
 
 #[test]
 fn chatgpt_alias_reads_codex_cache_and_anchors_before_period() {
+    let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = tempfile::tempdir().unwrap();
     fs::create_dir(config.path().join("sessions")).unwrap();
     let u = |input, cached, output| json!({"input_tokens":input,"cached_input_tokens":cached,"output_tokens":output,"reasoning_output_tokens":0,"total_tokens":input+output});
@@ -151,6 +160,7 @@ fn chatgpt_alias_reads_codex_cache_and_anchors_before_period() {
 
 #[test]
 fn copied_executable_works_in_a_unicode_directory_without_checkout() {
+    let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();
     let output = tempfile::Builder::new()
         .prefix("aiUsage Windows 日本語 ")
@@ -190,6 +200,7 @@ fn copied_executable_works_in_a_unicode_directory_without_checkout() {
 
 #[test]
 fn update_rejects_usage_options_without_writing_csv() {
+    let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let output = tempfile::tempdir().unwrap();
     for flags in [
         vec!["--all"],
