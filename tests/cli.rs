@@ -51,24 +51,23 @@ fn invoke(config: &TempDir, output: &TempDir, flags: &[&str], reply: &str) -> st
 }
 fn input(path: &std::path::Path) -> u64 {
     let mut reader = csv::Reader::from_path(path.join("usage.csv")).unwrap();
-    assert_eq!(reader.headers().unwrap().len(), 6);
+    assert_eq!(reader.headers().unwrap().len(), 11);
     let records: Vec<_> = reader.records().map(Result::unwrap).collect();
     assert_eq!(records.len(), 1);
-    records[0][1].parse().unwrap()
+    records[0][6].parse().unwrap()
 }
 
 #[test]
-fn dates_always_produce_the_same_six_columns_and_one_row_per_model() {
+fn ungrouped_ranges_produce_eleven_columns_and_one_row_per_model() {
     let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();
     for (flags, expected) in [
-        (vec!["--month", "2026-09"], 20),
-        (vec!["--day", "2026-09-30"], 10),
-        (vec!["--year", "2026"], 40),
+        (vec!["2026-09"], 20),
+        (vec!["2026-09-30"], 10),
+        (vec!["2026"], 40),
         (vec!["--from", "2026-09-01"], 30),
         (vec!["--to", "2026-09-30"], 40),
         (vec!["--from", "2026-09-01", "--to", "2026-09-30"], 20),
-        (vec!["--all"], 50),
         (vec![], 50),
     ] {
         let output = tempfile::tempdir().unwrap();
@@ -84,6 +83,239 @@ fn dates_always_produce_the_same_six_columns_and_one_row_per_model() {
 }
 
 #[test]
+fn monthly_and_daily_grouping_split_multiple_periods_in_one_run() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = fixture();
+    for (flags, expected) in [
+        (
+            vec!["--month", "2026"],
+            vec![("2026-08", "10"), ("2026-09", "20"), ("2026-10", "10")],
+        ),
+        (
+            vec!["--day", "2026-09"],
+            vec![("2026-09-01", "10"), ("2026-09-30", "10")],
+        ),
+    ] {
+        let output = tempfile::tempdir().unwrap();
+        let result = invoke(&config, &output, &flags, "");
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+        assert_eq!(
+            reader.headers().unwrap().iter().collect::<Vec<_>>(),
+            [
+                "サービス",
+                "集計単位",
+                "期間",
+                "集計開始",
+                "集計終了",
+                "区分",
+                "通常入力",
+                "キャッシュ読込",
+                "キャッシュ書込",
+                "出力",
+                "API参考換算USD"
+            ]
+        );
+        let rows: Vec<_> = reader.records().map(Result::unwrap).collect();
+        assert_eq!(rows.len(), expected.len());
+        for (row, (label, count)) in rows.iter().zip(expected) {
+            assert_eq!(&row[0], "claude");
+            assert_eq!(&row[2], label);
+            assert_eq!(&row[6], count);
+        }
+    }
+}
+
+#[test]
+fn grouping_clips_bounds_skips_empty_buckets_and_handles_precision_open_ends() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = fixture();
+    for (flags, expected) in [
+        (
+            vec!["--month", "--from", "2026-09-15", "--to", "2026-09"],
+            vec![(
+                "month",
+                "2026-09",
+                "2026-09-15T00:00:00+09:00",
+                "2026-10-01T00:00:00+09:00",
+                "10",
+            )],
+        ),
+        (
+            vec!["--year", "--to", "2026-09"],
+            vec![
+                (
+                    "year",
+                    "2025",
+                    "2025-12-31T23:59:59+09:00",
+                    "2026-01-01T00:00:00+09:00",
+                    "10",
+                ),
+                (
+                    "year",
+                    "2026",
+                    "2026-01-01T00:00:00+09:00",
+                    "2026-10-01T00:00:00+09:00",
+                    "30",
+                ),
+            ],
+        ),
+        (
+            vec!["--from", "2026-09", "--to", "2026-09"],
+            vec![(
+                "total",
+                "total",
+                "2026-09-01T00:00:00+09:00",
+                "2026-10-01T00:00:00+09:00",
+                "20",
+            )],
+        ),
+        (vec!["2026-07", "--day"], vec![]),
+    ] {
+        let output = tempfile::tempdir().unwrap();
+        let result = invoke(&config, &output, &flags, "");
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+        let rows: Vec<_> = reader.records().map(Result::unwrap).collect();
+        assert_eq!(rows.len(), expected.len());
+        for (row, (unit, label, start, end, count)) in rows.iter().zip(expected) {
+            assert_eq!(&row[1], unit);
+            assert_eq!(&row[2], label);
+            assert_eq!(&row[3], start);
+            assert_eq!(&row[4], end);
+            assert_eq!(&row[6], count);
+        }
+    }
+}
+
+#[test]
+fn all_logs_are_monthly_grouped_without_total_or_missing_month_rows() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = fixture();
+    let output = tempfile::tempdir().unwrap();
+    let result = invoke(&config, &output, &["--month"], "");
+    assert!(result.status.success());
+    let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+    let rows: Vec<_> = reader.records().map(Result::unwrap).collect();
+    assert_eq!(
+        rows.iter().map(|r| (&r[2], &r[6])).collect::<Vec<_>>(),
+        [
+            ("2025-12", "10"),
+            ("2026-08", "10"),
+            ("2026-09", "20"),
+            ("2026-10", "10")
+        ]
+    );
+    assert_eq!(&rows[0][3], "2025-12-31T23:59:59+09:00");
+}
+
+#[test]
+fn model_rows_are_sorted_within_each_bucket_and_unknown_prices_stay_blank() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = fixture();
+    let make = |n, stamp, model| {
+        json!({"type":"assistant", "timestamp":stamp, "requestId":format!("extra-r{n}"), "message":{"id":format!("extra-m{n}"),"model":model, "usage":{"input_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":2}}}).to_string()
+    };
+    fs::write(
+        config.path().join("projects/extra.jsonl"),
+        [
+            make(1, "2026-09-10T00:00:00Z", "z-unknown,quoted"),
+            make(2, "2026-09-10T00:00:00Z", "a-unknown"),
+            make(3, "2026-10-01T00:00:00Z", "a-unknown"),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let output = tempfile::tempdir().unwrap();
+    assert!(
+        invoke(&config, &output, &["--month", "--from", "2026-09"], "")
+            .status
+            .success()
+    );
+    let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+    let rows: Vec<_> = reader.records().map(Result::unwrap).collect();
+    assert_eq!(
+        rows.iter().map(|r| (&r[2], &r[5])).collect::<Vec<_>>(),
+        [
+            ("2026-09", "a-unknown"),
+            ("2026-09", "claude-opus-5-5"),
+            ("2026-09", "z-unknown,quoted"),
+            ("2026-10", "a-unknown"),
+            ("2026-10", "claude-opus-5-5")
+        ]
+    );
+    assert_eq!(&rows[0][10], "");
+    assert_eq!(&rows[2][10], "");
+    assert!(!rows[1][10].is_empty());
+}
+
+#[test]
+fn every_token_and_usd_total_is_conserved_across_grouping_units() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = fixture();
+    let mut totals = Vec::new();
+    for flags in [
+        vec!["2026"],
+        vec!["2026", "--day"],
+        vec!["2026", "--month"],
+        vec!["2026", "--year"],
+    ] {
+        let output = tempfile::tempdir().unwrap();
+        assert!(invoke(&config, &output, &flags, "").status.success());
+        let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+        let mut sum = [0_u128; 5];
+        for row in reader.records().map(Result::unwrap) {
+            for (index, total) in sum[..4].iter_mut().enumerate() {
+                *total += row[index + 6].parse::<u128>().unwrap();
+            }
+            let (whole, fraction) = row[10].split_once('.').unwrap();
+            assert!(fraction.len() <= 15);
+            sum[4] += whole.parse::<u128>().unwrap() * 1_000_000_000_000_000
+                + fraction.parse::<u128>().unwrap() * 10_u128.pow(15 - fraction.len() as u32);
+        }
+        totals.push(sum);
+    }
+    assert_eq!(&totals[0][..4], [40, 80, 120, 160]);
+    assert!(totals[0][4] > 0);
+    assert!(totals.iter().all(|sum| *sum == totals[0]));
+}
+
+#[test]
+fn missing_price_for_one_event_blanks_only_its_bucket_model() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = fixture();
+    let ambiguous = json!({"type":"assistant", "timestamp":"2026-09-10T00:00:00Z", "requestId":"ambiguous-r", "message":{"id":"ambiguous-m", "model":"claude-opus-5-5", "usage":{"input_tokens":1, "cache_read_input_tokens":0, "cache_creation_input_tokens":5, "output_tokens":2}}});
+    fs::write(
+        config.path().join("projects/ambiguous.jsonl"),
+        ambiguous.to_string(),
+    )
+    .unwrap();
+    let output = tempfile::tempdir().unwrap();
+    assert!(
+        invoke(&config, &output, &["--month", "--from", "2026-09"], "")
+            .status
+            .success()
+    );
+    let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+    let rows: Vec<_> = reader.records().map(Result::unwrap).collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(&rows[0][2], "2026-09");
+    assert_eq!(&rows[0][6], "21");
+    assert_eq!(&rows[0][8], "65");
+    assert_eq!(&rows[0][10], "");
+    assert_eq!(&rows[1][2], "2026-10");
+    assert!(!rows[1][10].is_empty());
+}
+
+#[test]
 fn overwrite_requires_affirmative_input_and_eof_preserves_original() {
     let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();
@@ -91,12 +323,12 @@ fn overwrite_requires_affirmative_input_and_eof_preserves_original() {
     let path = output.path().join("usage.csv");
     fs::write(&path, "original").unwrap();
     for reply in ["", "n\n", "anything\n"] {
-        let result = invoke(&config, &output, &["--all"], reply);
+        let result = invoke(&config, &output, &[], reply);
         assert!(!result.status.success());
         assert!(String::from_utf8_lossy(&result.stderr).contains("上書き"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "original");
     }
-    let result = invoke(&config, &output, &["--month", "2026-09"], "y\n");
+    let result = invoke(&config, &output, &["2026-09"], "y\n");
     assert!(result.status.success());
     assert_eq!(input(output.path()), 20);
 }
@@ -106,8 +338,11 @@ fn invalid_periods_and_removed_options_do_not_create_output() {
     let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();
     for flags in [
-        vec!["--month", "2026-09", "--all"],
-        vec!["--day", "2026-02-30"],
+        vec!["--all"],
+        vec!["--day", "--month"],
+        vec!["2026-09", "--from", "2026"],
+        vec!["2026-09", "--to", "2026"],
+        vec!["2026-02-30"],
         vec!["--output", "other.csv"],
         vec!["--group-by", "model"],
         vec!["--from", "2026-09-30", "--to", "2026-09-01"],
@@ -154,7 +389,19 @@ fn chatgpt_alias_reads_codex_cache_and_anchors_before_period() {
     let row = reader.records().next().unwrap().unwrap();
     assert_eq!(
         row.iter().collect::<Vec<_>>(),
-        ["gpt-6.1-sol", "20", "80", "0", "10", "0.000148"]
+        [
+            "chatgpt",
+            "month",
+            "2026-09",
+            "2026-09-01T00:00:00+09:00",
+            "2026-10-01T00:00:00+09:00",
+            "gpt-6.1-sol",
+            "20",
+            "80",
+            "0",
+            "10",
+            "0.000148"
+        ]
     );
 }
 
@@ -185,7 +432,7 @@ fn copied_executable_works_in_a_unicode_directory_without_checkout() {
         );
     }
     let result = Command::new(&copied)
-        .args(["claude", "--all"])
+        .args(["claude"])
         .env("CLAUDE_CONFIG_DIR", config.path())
         .current_dir(output.path())
         .output()

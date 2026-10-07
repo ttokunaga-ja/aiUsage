@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use clap::Parser;
 use model::{Provider, Tokens};
-use period::{Cli, Command as UsageCommand, Period};
+use period::{Bucket, Cli, Command as UsageCommand, Period};
 use pricing::Pricing;
 use sha2::{Digest, Sha256};
 use std::{
@@ -20,7 +20,12 @@ use std::{
 };
 
 const OUTPUT: &str = "usage.csv";
-const HEADER: [&str; 6] = [
+const HEADER: [&str; 11] = [
+    "サービス",
+    "集計単位",
+    "期間",
+    "集計開始",
+    "集計終了",
     "区分",
     "通常入力",
     "キャッシュ読込",
@@ -106,7 +111,13 @@ fn add_tokens(to: &mut Tokens, from: &Tokens) -> Result<()> {
     Ok(())
 }
 
-fn save(path: &Path, original: Option<Vec<u8>>, rows: &BTreeMap<String, Row>) -> Result<()> {
+fn save(
+    path: &Path,
+    original: Option<Vec<u8>>,
+    provider: Provider,
+    period: &Period,
+    rows: &BTreeMap<(Bucket, String), Row>,
+) -> Result<()> {
     let mut temporary =
         tempfile::NamedTempFile::new_in(path.parent().context("出力先が無効です")?)?;
     {
@@ -114,8 +125,17 @@ fn save(path: &Path, original: Option<Vec<u8>>, rows: &BTreeMap<String, Row>) ->
             .terminator(csv::Terminator::CRLF)
             .from_writer(temporary.as_file_mut());
         writer.write_record(HEADER)?;
-        for (model, row) in rows {
+        for ((bucket, model), row) in rows {
             writer.write_record([
+                match provider {
+                    Provider::Claude => "claude",
+                    Provider::Chatgpt => "chatgpt",
+                }
+                .into(),
+                period.grouping.name().into(),
+                bucket.label.clone(),
+                period::csv_datetime(bucket.start),
+                period::csv_datetime(bucket.end),
                 model.clone(),
                 row.tokens.input.to_string(),
                 row.tokens.read.to_string(),
@@ -183,9 +203,14 @@ fn run() -> Result<()> {
         bail!("JSONL形式の保存ログが見つかりません");
     }
     let pricing = Pricing::new();
-    let mut rows = BTreeMap::<String, Row>::new();
+    let mut rows = BTreeMap::<(Bucket, String), Row>::new();
+    let earliest = scan.events.iter().map(|e| e.timestamp).min();
     for event in scan.events.iter().filter(|e| period.includes(e.timestamp)) {
-        let row = rows.entry(event.model.clone()).or_default();
+        let bucket = period.bucket(
+            event.timestamp,
+            earliest.context("保存ログに利用日時がありません")?,
+        )?;
+        let row = rows.entry((bucket, event.model.clone())).or_default();
         add_tokens(&mut row.tokens, &event.tokens)?;
         match pricing.cost(provider, event) {
             Some(cost) => {
@@ -197,22 +222,22 @@ fn run() -> Result<()> {
             None => row.unpriced = true,
         }
     }
-    save(&output, original, &rows)?;
+    save(&output, original, provider, &period, &rows)?;
     if scan.malformed > 0 || scan.excluded > 0 {
         eprintln!(
             "警告: 解析できない行{}件、利用量を確定できず除外した記録{}件",
             scan.malformed, scan.excluded
         );
     }
-    let unpriced: Vec<_> = rows
+    let unpriced: std::collections::BTreeSet<_> = rows
         .iter()
         .filter(|(_, r)| r.unpriced)
-        .map(|(m, _)| m.as_str())
+        .map(|((_, m), _)| m.as_str())
         .collect();
     if !unpriced.is_empty() {
         eprintln!(
             "警告: 単価・キャッシュTTLなどを確定できないためAPI参考換算USDを空欄にしたモデル: {}",
-            unpriced.join(", ")
+            unpriced.into_iter().collect::<Vec<_>>().join(", ")
         );
     }
     if rows.is_empty() {
@@ -233,12 +258,20 @@ fn main() {
 mod tests {
     use super::*;
     #[test]
-    fn save_fixed_columns_without_totals_and_refuse_changed_destination() {
+    fn save_numeric_columns_csv_escaping_and_refuse_changed_destination() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(OUTPUT);
+        let period = Period {
+            start: Some("2026-09-01T00:00:00Z".parse().unwrap()),
+            end: "2026-10-01T00:00:00Z".parse().unwrap(),
+            grouping: period::Grouping::Total,
+        };
+        let bucket = period
+            .bucket(period.start.unwrap(), period.start.unwrap())
+            .unwrap();
         let mut rows = BTreeMap::new();
         rows.insert(
-            "model".into(),
+            (bucket.clone(), "model,\"quoted\"\nline".into()),
             Row {
                 tokens: Tokens {
                     input: 123,
@@ -251,15 +284,25 @@ mod tests {
                 unpriced: false,
             },
         );
-        save(&path, None, &rows).unwrap();
+        rows.insert(
+            (bucket, "unpriced".into()),
+            Row {
+                unpriced: true,
+                ..Row::default()
+            },
+        );
+        save(&path, None, Provider::Claude, &period, &rows).unwrap();
         let mut reader = csv::Reader::from_path(&path).unwrap();
         assert_eq!(reader.headers().unwrap().iter().collect::<Vec<_>>(), HEADER);
         let records: Vec<_> = reader.records().map(Result::unwrap).collect();
-        assert_eq!(records.len(), 1);
-        assert_eq!(&records[0][1], "123");
+        assert_eq!(records.len(), 2);
+        assert_eq!(&records[0][5], "model,\"quoted\"\nline");
+        assert_eq!(&records[0][6], "123");
+        assert_eq!(&records[0][10], "0.1");
+        assert_eq!(&records[1][10], "");
         let before = fingerprint(&path).unwrap();
         fs::write(&path, "changed").unwrap();
-        assert!(save(&path, before, &rows).is_err());
+        assert!(save(&path, before, Provider::Claude, &period, &rows).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "changed");
     }
 }
