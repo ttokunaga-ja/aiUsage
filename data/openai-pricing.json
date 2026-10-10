@@ -1,5 +1,5 @@
 {
-  "basis": "2026-10-03 current published Standard API rates; model token charges only; historical comparison, not invoice",
+  "basis": "2026-10-10 current published Standard API rates; model token charges only; historical comparison, not invoice",
   "currency": "USD",
   "per_tokens": 1000000,
   "long_input_threshold": 272000,
@@ -558,5 +558,9 @@
       ]
     }
   },
-  "rate_unit": "nano-USD per million tokens"
+  "rate_unit": "nano-USD per million tokens",
+  "aliases": {
+    "gpt-daybreak-blue-latest": "gpt-5.6-sol"
+  },
+  "alias_source_url": "https://developers.openai.com/api/docs/models/gpt-daybreak-blue-latest"
 }

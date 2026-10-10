@@ -1,5 +1,11 @@
 # Windows実機検証
 
+## 0.2.1の価格表検証
+
+2026-10-10（日本時間）、Windows 11 x64実機で`scripts/verify-windows.cmd`を実行し、整形・Clippy・28件の単体テスト・18件のCLIテスト・MSVCリリースビルド・バージョン表示が成功した。Daybreak Blueのキャッシュ別・長文単価、Claude新モデル、Haiku 5.5の100,000／100,001トークン境界、両TTLの書き込みを含む入力長、日付付きモデルID、未知TTLの空欄を検査した。CLIテストでDaybreakとHaikuのCSV換算額と未登録モデル警告の解消も確認した。
+
+macOS・Linuxでも整形・Clippy・44件のテスト・リリースビルドが成功した。macOSは両CPU向けUniversalバイナリの署名とApple Silicon上のCSV出力を確認した。生ログはローカルの`dist/validation/v0.2.1/`に保存した。Intel Mac実機の起動は未検証。
+
 ## 0.2.0の期間別CSV検証
 
 2026-10-07（日本時間）、SSH経由でWindows 11 x64実機の一時フォルダへソースをコピーし、`scripts/verify-windows.cmd`を実行した。MSVC版Rust 1.97.1で整形・Clippy・25件の単体テスト・16件のCLIテスト・リリースビルド・`aiUsage 0.2.0`の表示がすべて成功した。

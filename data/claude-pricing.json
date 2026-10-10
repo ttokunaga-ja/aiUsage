@@ -1,5 +1,5 @@
 {
-  "basis": "2026-10-03 Standard Claude API token rates; not historical invoice rates",
+  "basis": "2026-10-10 Standard Claude API token rates; not historical invoice rates",
   "source_url": "https://platform.claude.com/docs/en/about-claude/pricing",
   "rate_unit": "nano-USD per million tokens",
   "category_order": [
@@ -40,7 +40,7 @@
     ],
     "claude-sonnet-5-5": [
       2000000000,
-      200000000,
+      100000000,
       2500000000,
       4000000000,
       10000000000
@@ -93,6 +93,46 @@
       3750000000,
       6000000000,
       15000000000
+    ],
+    "claude-fable-5-1": [
+      10000000000,
+      250000000,
+      12500000000,
+      20000000000,
+      50000000000
+    ],
+    "claude-mythos-5-1": [
+      10000000000,
+      250000000,
+      12500000000,
+      20000000000,
+      50000000000
+    ],
+    "claude-mythos-5": [
+      10000000000,
+      1000000000,
+      12500000000,
+      20000000000,
+      50000000000
+    ],
+    "claude-haiku-5-5": [
+      100000000,
+      10000000,
+      125000000,
+      200000000,
+      500000000
     ]
+  },
+  "long_context_models": {
+    "claude-haiku-5-5": {
+      "input_threshold": 100000,
+      "rates": [
+        500000000,
+        50000000,
+        625000000,
+        1000000000,
+        2500000000
+      ]
+    }
   }
 }

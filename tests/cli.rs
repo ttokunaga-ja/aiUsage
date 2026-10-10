@@ -406,6 +406,59 @@ fn chatgpt_alias_reads_codex_cache_and_anchors_before_period() {
 }
 
 #[test]
+fn daybreak_csv_is_priced_without_unknown_model_warning() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = tempfile::tempdir().unwrap();
+    fs::create_dir(config.path().join("sessions")).unwrap();
+    let usage = json!({"input_tokens":100,"cached_input_tokens":80,"output_tokens":10,"reasoning_output_tokens":0,"total_tokens":110});
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":"daybreak","model_provider":"openai"}}),
+        json!({"type":"turn_context","payload":{"model":"gpt-daybreak-blue-latest"}}),
+        json!({"type":"event_msg","timestamp":"2026-10-09T00:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":usage,"last_token_usage":usage}}}),
+    ];
+    fs::write(
+        config
+            .path()
+            .join("sessions/rollout-22222222-2222-2222-2222-222222222222.jsonl"),
+        rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_aiUsage"))
+        .args(["chatgpt", "2026-10", "--month"])
+        .env("CODEX_HOME", config.path())
+        .current_dir(output.path())
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("空欄"));
+    let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+    let row = reader.records().next().unwrap().unwrap();
+    assert_eq!(&row[5], "gpt-daybreak-blue-latest");
+    assert_eq!(&row[10], "0.000312");
+}
+
+#[test]
+fn haiku_csv_uses_total_prompt_length_and_preserves_both_write_ttls() {
+    let _guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let config = tempfile::tempdir().unwrap();
+    fs::create_dir(config.path().join("projects")).unwrap();
+    let rows = [10000,10001].into_iter().enumerate().map(|(n,input)| json!({"type":"assistant","timestamp":"2026-10-09T00:00:00Z","requestId":format!("r{n}"),"message":{"id":format!("m{n}"),"model":"claude-haiku-5-5","usage":{"input_tokens":input,"cache_read_input_tokens":10000,"cache_creation_input_tokens":80000,"cache_creation":{"ephemeral_5m_input_tokens":40000,"ephemeral_1h_input_tokens":40000},"output_tokens":10000}}}).to_string()).collect::<Vec<_>>().join("\n");
+    fs::write(config.path().join("projects/haiku.jsonl"), rows).unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let result = invoke(&config, &output, &["2026-10"], "");
+    assert!(result.status.success());
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("空欄"));
+    let mut reader = csv::Reader::from_path(output.path().join("usage.csv")).unwrap();
+    let row = reader.records().next().unwrap().unwrap();
+    assert_eq!(&row[10], "0.1146005");
+}
+
+#[test]
 fn copied_executable_works_in_a_unicode_directory_without_checkout() {
     let _process_guard = PROCESS_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let config = fixture();

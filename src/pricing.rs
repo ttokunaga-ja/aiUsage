@@ -6,6 +6,12 @@ use std::collections::BTreeMap;
 #[derive(Deserialize)]
 struct ClaudeRates {
     models: BTreeMap<String, [u64; 5]>,
+    long_context_models: BTreeMap<String, ClaudeLongRates>,
+}
+#[derive(Deserialize)]
+struct ClaudeLongRates {
+    input_threshold: u64,
+    rates: [u64; 5],
 }
 #[derive(Deserialize)]
 struct Schedule {
@@ -15,6 +21,7 @@ struct Schedule {
 #[derive(Deserialize)]
 struct OpenaiRates {
     long_input_threshold: u64,
+    aliases: BTreeMap<String, String>,
     models: BTreeMap<String, Schedule>,
 }
 pub struct Pricing {
@@ -36,7 +43,11 @@ impl Pricing {
         match provider {
             Provider::Claude => {
                 let model = strip_date(&event.model);
-                let r = self.claude.models.get(model)?;
+                let base = self.claude.models.get(model)?;
+                let r = match self.claude.long_context_models.get(model) {
+                    Some(long) if event.context_input > long.input_threshold => &long.rates,
+                    _ => base,
+                };
                 if t.write != t.write_5m.checked_add(t.write_1h)? {
                     return None;
                 }
@@ -63,11 +74,16 @@ impl Pricing {
                 if event.provider != "openai" {
                     return None;
                 }
+                let model = self
+                    .openai
+                    .aliases
+                    .get(&event.model)
+                    .map_or(event.model.as_str(), String::as_str);
                 let schedule = self
                     .openai
                     .models
-                    .get(&event.model)
-                    .or_else(|| self.openai.models.get(strip_date(&event.model)))?;
+                    .get(model)
+                    .or_else(|| self.openai.models.get(strip_date(model)))?;
                 let r = if event.context_input > self.openai.long_input_threshold {
                     // Null entire long schedule means no separate long tariff.
                     if schedule.long.iter().all(Option::is_none) {
@@ -126,6 +142,74 @@ mod tests {
             fast: false,
             us_geo: false,
             context_input,
+        }
+    }
+    #[test]
+    fn daybreak_alias_uses_published_short_and_long_rates() {
+        let tokens = Tokens {
+            input: 1_000_000,
+            read: 1_000_000,
+            write: 1_000_000,
+            output: 1_000_000,
+            ..Tokens::default()
+        };
+        for (context, expected) in [(272000, "29.4"), (272001, "48.8")] {
+            let e = event("gpt-daybreak-blue-latest", tokens.clone(), context);
+            assert_eq!(
+                Pricing::new().cost(Provider::Chatgpt, &e).map(usd),
+                Some(expected.into())
+            );
+        }
+    }
+    #[test]
+    fn new_claude_models_and_haiku_prompt_boundary() {
+        let tokens = Tokens {
+            input: 1_000_000,
+            read: 1_000_000,
+            write: 2_000_000,
+            write_5m: 1_000_000,
+            write_1h: 1_000_000,
+            output: 1_000_000,
+        };
+        for (model, context, expected) in [
+            ("claude-fable-5-1", 4_000_000, "92.75"),
+            ("claude-mythos-5-1", 4_000_000, "92.75"),
+            ("claude-mythos-5", 4_000_000, "93.5"),
+            ("claude-sonnet-5-5", 4_000_000, "18.6"),
+        ] {
+            let e = event(model, tokens.clone(), context);
+            assert_eq!(
+                Pricing::new().cost(Provider::Claude, &e).map(usd),
+                Some(expected.into()),
+                "{model}"
+            );
+        }
+    }
+    #[test]
+    fn haiku_threshold_counts_cache_reads_and_both_write_ttls() {
+        for (input, expected) in [(10000, "0.0191"), (10001, "0.0955005")] {
+            let tokens = Tokens {
+                input,
+                read: 10000,
+                write: 80000,
+                write_5m: 40000,
+                write_1h: 40000,
+                output: 10000,
+            };
+            for model in ["claude-haiku-5-5", "claude-haiku-5-5-20261008"] {
+                let e = event(model, tokens.clone(), input + 90000);
+                assert_eq!(
+                    Pricing::new().cost(Provider::Claude, &e).map(usd),
+                    Some(expected.into())
+                );
+                let mut unknown_ttl = e;
+                unknown_ttl.tokens.write_1h = 0;
+                assert!(
+                    Pricing::new()
+                        .cost(Provider::Claude, &unknown_ttl)
+                        .is_none()
+                );
+            }
         }
     }
     #[test]
